@@ -1,8 +1,11 @@
-from typing import Any, Dict, List, Optional
-from pydantic import BaseModel, Field
-import uuid
-import random
 import copy
+import random
+import time
+import uuid
+from typing import Any, Dict, List
+
+from pydantic import BaseModel, Field
+
 
 class StrategyGenome(BaseModel):
     """

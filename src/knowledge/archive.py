@@ -1,10 +1,11 @@
-import asyncio
-import logging
-import os
-from typing import Any, Dict, List, Optional
-import asyncpg
 import json
-from datetime import datetime
+import logging
+from typing import Any, Dict, List, Optional
+
+import asyncpg
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+
+from src.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -14,17 +15,23 @@ class RelationalArchive:
     Maintains the Strategy Genome Library and Experiment Archive with full provenance.
     """
     def __init__(self, dsn: Optional[str] = None):
-        self.dsn = dsn or os.getenv("POSTGRES_URL", "postgresql://user:password@localhost:5432/autonomous_marketing")
+        self.dsn = dsn or settings.POSTGRES_URL
         self.pool: Optional[asyncpg.Pool] = None
 
+    @retry(
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        stop=stop_after_attempt(5),
+        retry=retry_if_exception_type(Exception),
+        reraise=True
+    )
     async def connect(self):
-        """Establish connection pool to PostgreSQL."""
+        """Establish connection pool to PostgreSQL with automatic retries."""
         try:
             self.pool = await asyncpg.create_pool(dsn=self.dsn)
             logger.info("Connected to Relational Archive (PostgreSQL)")
             await self._initialize_schema()
         except Exception as e:
-            logger.error(f"Failed to connect to PostgreSQL: {e}")
+            logger.error(f"Failed to connect to PostgreSQL (retrying): {e}")
             raise
 
     async def close(self):

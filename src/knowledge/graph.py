@@ -1,7 +1,10 @@
 import logging
 from typing import Any, Dict, List, Optional
-from neo4j import GraphDatabase, AsyncGraphDatabase
-import os
+
+from neo4j import AsyncGraphDatabase
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+
+from src.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -11,19 +14,25 @@ class KnowledgeGraph:
     Maintains semantic networks for each brand's marketing domain, audience relationships, and playbook.
     """
     def __init__(self, uri: Optional[str] = None, user: Optional[str] = None, password: Optional[str] = None):
-        self.uri = uri or os.getenv("NEO4J_URI", "bolt://localhost:7687")
-        self.user = user or os.getenv("NEO4J_USER", "neo4j")
-        self.password = password or os.getenv("NEO4J_PASSWORD", "password")
+        self.uri = uri or settings.NEO4J_URI
+        self.user = user or settings.NEO4J_USER
+        self.password = password or settings.NEO4J_PASSWORD
         self._driver = None
 
+    @retry(
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        stop=stop_after_attempt(5),
+        retry=retry_if_exception_type(Exception),
+        reraise=True
+    )
     async def connect(self):
-        """Establish connection to Neo4j."""
+        """Establish connection to Neo4j with automatic retries."""
         try:
             self._driver = AsyncGraphDatabase.driver(self.uri, auth=(self.user, self.password))
             await self._driver.verify_connectivity()
             logger.info("Connected to Knowledge Graph (Neo4j)")
         except Exception as e:
-            logger.error(f"Failed to connect to Neo4j: {e}")
+            logger.error(f"Failed to connect to Neo4j (retrying): {e}")
             raise
 
     async def close(self):
@@ -101,7 +110,7 @@ class KnowledgeGraph:
         child_node = await self.get_node_by_property("Strategy", "strategy_id", child_strategy_id)
 
         if not parent_node or not child_node:
-            logger.warning(f"Could not link lineage: One or both strategy nodes missing.")
+            logger.warning("Could not link lineage: One or both strategy nodes missing.")
             return
 
         query = (

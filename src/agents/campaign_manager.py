@@ -1,10 +1,8 @@
-import asyncio
-import logging
-from typing import Any, Dict, List
 import json
+import logging
 
 from src.agents.base import AutonomousAgent
-from src.core.events import BaseEvent, PerformanceAnomalyEvent, AudienceSignalEvent
+from src.core.events import BaseEvent
 
 logger = logging.getLogger(__name__)
 

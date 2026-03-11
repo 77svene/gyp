@@ -1,16 +1,14 @@
-import asyncio
-import logging
-import uuid
 import time
-from typing import Any, Dict, List, Optional
-from datetime import datetime
+import uuid
+from typing import Any, Dict
 
-from src.core.events import EventBus, ExperimentResultEvent
+from src.core.event_bus import EventBus
+from src.core.events import ExperimentResultEvent
+from src.core.logger import system_logger as logger
+from src.core.tasks import TaskQueue
 from src.knowledge.archive import RelationalArchive
 from src.knowledge.graph import KnowledgeGraph
-from src.evolution.genome import StrategyGenome, PopulationManager
 
-logger = logging.getLogger(__name__)
 
 class ExperimentManager:
     """
@@ -53,10 +51,10 @@ class ExperimentManager:
         # Link in Knowledge Graph
         strategy_node = await self.kg.get_node_by_property("Strategy", "strategy_id", strategy_id)
         if strategy_node and "_id" in strategy_node:
-            exp_node_id = await self.kg.create_node("Experiment", {"experiment_id": experiment_id, "status": "running"})
+            exp_node_id_str = await self.kg.create_node("Experiment", {"experiment_id": experiment_id, "status": "running"})
             await self.kg.create_relationship(
-                strategy_node["_id"],
-                exp_node_id,
+                int(strategy_node["_id"]),
+                int(exp_node_id_str),
                 "EVALUATED_BY"
             )
 
@@ -78,8 +76,13 @@ class ExperimentManager:
             else:
                 exp["observed_outcomes"][k] = v
 
-        # Calculate statistical significance (simplified simulation)
-        # In reality, this would use sequential analysis / Bayesian updating
+        # Offload statistical calculation / Bayesian updating to Redis Background Queue
+        await TaskQueue.enqueue(
+            "process_experiment_results",
+            experiment_id=experiment_id,
+            ecosystem_id=exp["ecosystem_id"]
+        )
+
         sample_size = exp.get("sample_size", 0) + 1
         exp["sample_size"] = sample_size
         exp["statistical_significance"] = min(0.99, sample_size * 0.05 + confidence_interval)
@@ -107,7 +110,7 @@ class ExperimentManager:
             statistical_significance=exp["statistical_significance"],
             payload={"conclusion": "Statistically significant result achieved or time limit reached."}
         )
-        self.event_bus.publish(result_event)
+        await self.event_bus.publish(result_event)
 
         # Archive final state
         await self.archive.log_experiment_result(

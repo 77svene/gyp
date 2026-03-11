@@ -1,6 +1,8 @@
-from typing import Any, Dict, List, Optional
 import time
+from typing import Any, Dict, List
+
 from pydantic import BaseModel, Field
+
 
 class Observation(BaseModel):
     """An observation recorded by an agent."""

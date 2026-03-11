@@ -1,7 +1,9 @@
-from typing import Any, Dict, List, Optional
-from datetime import datetime
 import uuid
+from datetime import datetime
+from typing import Any, Dict, List, Optional
+
 from pydantic import BaseModel, Field
+
 
 class BaseEvent(BaseModel):
     """Base event model for the event-driven nervous system."""

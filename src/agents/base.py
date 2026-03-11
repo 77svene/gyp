@@ -1,19 +1,18 @@
 import asyncio
-import logging
-from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional
-import uuid
 import time
+import uuid
+from abc import ABC, abstractmethod
 from datetime import datetime
+from typing import Any, Dict, List, Optional
 
-from src.core.events import BaseEvent, PerformanceAnomalyEvent, AudienceSignalEvent, CapabilityGapEvent
+from src.agents.memory import WorkingMemory
 from src.core.event_bus import EventBus
-from src.core.llm import OllamaClient, Message
-from src.agents.memory import WorkingMemory, Observation
-from src.knowledge.graph import KnowledgeGraph
+from src.core.events import CapabilityGapEvent
+from src.core.llm import Message, OllamaClient
+from src.core.logger import system_logger as logger
 from src.knowledge.archive import RelationalArchive
+from src.knowledge.graph import KnowledgeGraph
 
-logger = logging.getLogger(__name__)
 
 class AutonomousAgent(ABC):
     """
@@ -154,12 +153,20 @@ class AutonomousAgent(ABC):
         }}
         """
         try:
-            # We would typically use generate_structured_output here, but for simplicity we'll just ask for JSON
+            start_time = time.time()
             messages = [Message(role="user", content=prompt)]
             response_json = await self.llm.chat(messages, json_format=True)
             import json
             decision = json.loads(response_json)
-            logger.debug(f"Agent {self.agent_id} decided to: {decision.get('action_type')}")
+
+            # Observability: Track reasoning execution time
+            duration = time.time() - start_time
+            logger.info("Agent Decision Matrix Executed", extra={
+                "agent_id": self.agent_id,
+                "agent_type": self.agent_type,
+                "action_type": decision.get('action_type'),
+                "execution_time_sec": round(duration, 3)
+            })
             return decision
         except Exception as e:
             logger.warning(f"Agent {self.agent_id} failed to decide: {e}")
@@ -186,7 +193,7 @@ class AutonomousAgent(ABC):
                 priority_assessment="high",
                 payload={"reasoning": current_plan.get("reasoning", "")}
             )
-            self.event_bus.publish(gap_event)
+            await self.event_bus.publish(gap_event)
             logger.info(f"Agent {self.agent_id} published CapabilityGapEvent.")
 
         else:

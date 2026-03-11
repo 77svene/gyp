@@ -1,11 +1,12 @@
 import asyncio
 import json
 import logging
-import uuid
-import os
 from typing import Any, Callable, Coroutine, Dict, List, Optional
-import aio_pika
 
+import aio_pika
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+
+from src.core.config import settings
 from src.core.events import BaseEvent
 
 logger = logging.getLogger(__name__)
@@ -15,27 +16,38 @@ class EventBus:
     Event-Driven Nervous System Implementation.
     Uses RabbitMQ for local-first asynchronous event distribution.
     """
-    def __init__(self, rabbitmq_url: Optional[str] = None, exchange_name: str = "marketing_nervous_system"):
-        self.rabbitmq_url = rabbitmq_url or os.getenv("RABBITMQ_URL", "amqp://user:password@localhost:5672/")
-        self.exchange_name = exchange_name
+    def __init__(self, rabbitmq_url: Optional[str] = None, exchange_name: Optional[str] = None):
+        self.rabbitmq_url = rabbitmq_url or settings.RABBITMQ_URL
+        self.exchange_name = exchange_name or settings.RABBITMQ_EXCHANGE
         self.connection: Optional[aio_pika.RobustConnection] = None
         self.channel: Optional[aio_pika.RobustChannel] = None
         self.exchange: Optional[aio_pika.RobustExchange] = None
         self.subscribers: Dict[str, List[Callable[[BaseEvent], Coroutine[Any, Any, None]]]] = {}
 
+    @retry(
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        stop=stop_after_attempt(5),
+        retry=retry_if_exception_type(Exception),
+        reraise=True
+    )
     async def connect(self):
-        """Establish async connection to RabbitMQ."""
+        """Establish async connection to RabbitMQ with automatic retries."""
         try:
             self.connection = await aio_pika.connect_robust(self.rabbitmq_url)
             self.channel = await self.connection.channel()
             self.exchange = await self.channel.declare_exchange(self.exchange_name, aio_pika.ExchangeType.TOPIC, durable=True)
             logger.info("Connected to Event Bus (RabbitMQ)")
         except Exception as e:
-            logger.error(f"Failed to connect to RabbitMQ: {e}")
+            logger.error(f"Failed to connect to RabbitMQ (retrying): {e}")
             raise
 
+    @retry(
+        wait=wait_exponential(multiplier=0.5, min=1, max=5),
+        stop=stop_after_attempt(3),
+        retry=retry_if_exception_type(Exception)
+    )
     async def publish(self, event: BaseEvent):
-        """Publish an event asynchronously to the topic exchange."""
+        """Publish an event asynchronously to the topic exchange with retry logic."""
         if not self.connection or self.connection.is_closed:
             await self.connect()
 
@@ -59,7 +71,8 @@ class EventBus:
             asyncio.create_task(self._notify_local_subscribers(event))
 
         except Exception as e:
-            logger.error(f"Error publishing event {event.topic}: {e}")
+            logger.error(f"Error publishing event {event.topic} (retrying): {e}")
+            raise
 
     async def _notify_local_subscribers(self, event: BaseEvent):
         """Notify any in-process subscribers to the topic."""

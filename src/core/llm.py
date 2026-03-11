@@ -1,8 +1,12 @@
 import json
 import logging
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
+
 import httpx
 from pydantic import BaseModel
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+
+from src.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -15,13 +19,19 @@ class OllamaClient:
     Core Intelligence Integration using a local Ollama instance.
     Targets Qwen 3.5 9B (or fallback models) for reasoning, planning, and tool use.
     """
-    def __init__(self, base_url: str = "http://localhost:11434", default_model: str = "qwen2.5"):
-        self.base_url = base_url
-        self.default_model = default_model
-        self.client = httpx.AsyncClient(timeout=60.0)
+    def __init__(self, base_url: Optional[str] = None, default_model: Optional[str] = None):
+        self.base_url = base_url or settings.OLLAMA_BASE_URL
+        self.default_model = default_model or settings.DEFAULT_LLM_MODEL
+        self.client = httpx.AsyncClient(timeout=settings.LLM_TIMEOUT_SECONDS)
 
+    @retry(
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        stop=stop_after_attempt(settings.LLM_MAX_RETRIES),
+        retry=retry_if_exception_type((httpx.RequestError, httpx.HTTPStatusError)),
+        reraise=True
+    )
     async def chat(self, messages: List[Message], model: Optional[str] = None, json_format: bool = False, temperature: float = 0.7) -> str:
-        """Send a chat completion request to the local Ollama instance."""
+        """Send a chat completion request to the local Ollama instance with retry."""
         target_model = model or self.default_model
         url = f"{self.base_url}/api/chat"
 
@@ -43,11 +53,10 @@ class OllamaClient:
             data = response.json()
             return data["message"]["content"]
         except httpx.HTTPStatusError as e:
-            logger.error(f"HTTP error communicating with Ollama: {e.response.status_code} - {e.response.text}")
-            # Fallback logic could be implemented here (e.g., switching to a smaller model)
+            logger.warning(f"HTTP error communicating with Ollama (retrying): {e.response.status_code} - {e.response.text}")
             raise
         except Exception as e:
-            logger.error(f"Error communicating with Ollama: {e}")
+            logger.warning(f"Error communicating with Ollama (retrying): {e}")
             raise
 
     async def generate_structured_output(self, prompt: str, schema: BaseModel, model: Optional[str] = None) -> BaseModel:
@@ -72,7 +81,7 @@ class OllamaClient:
             # Parse the JSON and validate against the Pydantic model
             parsed_data = json.loads(response_text)
             return schema(**parsed_data)
-        except json.JSONDecodeError as e:
+        except json.JSONDecodeError:
             logger.error(f"Failed to decode JSON from LLM: {response_text}")
             raise
         except Exception as e:

@@ -1,14 +1,12 @@
-import asyncio
-import logging
-from typing import Any, Dict, List, Optional
-import os
-import importlib.util
 import ast
+import logging
+import os
 import uuid
-import inspect
+from typing import Any, Dict, List, Optional
 
-from src.core.events import EventBus, CapabilityGapEvent
-from src.core.llm import OllamaClient, Message
+from src.core.event_bus import EventBus
+from src.core.events import CapabilityGapEvent
+from src.core.llm import Message, OllamaClient
 from src.knowledge.graph import KnowledgeGraph
 
 logger = logging.getLogger(__name__)

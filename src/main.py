@@ -1,15 +1,15 @@
 import asyncio
 import logging
+
+from src.agents.campaign_manager import CampaignManagerAgent
 from src.core.event_bus import EventBus
 from src.core.llm import OllamaClient
-from src.knowledge.graph import KnowledgeGraph
-from src.knowledge.archive import RelationalArchive
-from src.agents.campaign_manager import CampaignManagerAgent
-from src.evolution.genome import StrategyGenome, PopulationManager
 from src.evolution.experiments import ExperimentManager
-from src.tools.forge import ToolForge
+from src.evolution.genome import PopulationManager
 from src.governance.auditor import DeepSystemAudit, EcosystemManager
-from datetime import datetime
+from src.knowledge.archive import RelationalArchive
+from src.knowledge.graph import KnowledgeGraph
+from src.tools.forge import ToolForge
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("SystemRunner")
@@ -33,16 +33,22 @@ async def main():
     await archive.connect()
 
     # 2. Subsystem Initialization
-    population = PopulationManager(archive, kg)
-    experiments = ExperimentManager(event_bus, archive, kg)
-    forge = ToolForge(event_bus, llm, kg)
+    PopulationManager(archive, kg)
+    ExperimentManager(event_bus, archive, kg)
+    ToolForge(event_bus, llm, kg)
 
     # 3. Ecosystem Setup
     eco_manager = EcosystemManager("Test Brand", {"budget_limit": 500, "allowed_platforms": ["twitter", "linkedin"]})
 
-    # 4. Agent Spawning
-    agent1 = CampaignManagerAgent(event_bus, llm, kg, archive, ecosystem_id=eco_manager.ecosystem_id)
-    await agent1.start()
+    # 4. Agent Supervision & Spawning
+    from src.agents.supervisor import AgentSupervisor
+    supervisor = AgentSupervisor(event_bus, llm, kg, archive)
+
+    # Spawn the first agent via the supervisor
+    agent1 = await supervisor.spawn_agent(CampaignManagerAgent, ecosystem_id=eco_manager.ecosystem_id)
+
+    # Start the continuous supervision loop in the background
+    asyncio.create_task(supervisor.supervise_loop())
 
     # 5. Governance Setup
     auditor = DeepSystemAudit(event_bus, kg, archive, llm, interval_seconds=10)
@@ -52,7 +58,7 @@ async def main():
     await asyncio.sleep(2)
 
     # 6. Simulate an external event to trigger the system
-    from src.core.events import PerformanceAnomalyEvent, CapabilityGapEvent
+    from src.core.events import CapabilityGapEvent, PerformanceAnomalyEvent
 
     # Simulate an anomaly
     anomaly = PerformanceAnomalyEvent(
@@ -66,7 +72,7 @@ async def main():
     )
 
     logger.info(f"Simulating Anomaly Event: {anomaly.topic}")
-    event_bus.publish(anomaly)
+    await event_bus.publish(anomaly)
 
     await asyncio.sleep(5)
 
@@ -83,7 +89,7 @@ async def main():
     )
 
     logger.info(f"Simulating Capability Gap Event: {gap.topic}")
-    event_bus.publish(gap)
+    await event_bus.publish(gap)
 
     # Let the system run its loops
     try:
